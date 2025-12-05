@@ -263,49 +263,71 @@ def join_gathering(user_id):
     try:
         con.execute("BEGIN")
 
-        cur.execute("SELECT max_participants, current_participants FROM Gathering WHERE meeting_id=?",(meeting_id,))
+        # 모임 정보 조회
+        cur.execute("""
+            SELECT max_participants, current_participants
+            FROM Gathering
+            WHERE meeting_id=?
+        """, (meeting_id,))
         row = cur.fetchone()
         if not row:
             print("❌ 모임 없음")
+            con.rollback()
             return
 
         max_p, cur_p = row
 
-        cur.execute("""
-            SELECT status FROM Gathering_Participants
-            WHERE meeting_id=? AND user_id=?
-        """,(meeting_id,user_id))
+        # 내 등급 조회
+        cur.execute("SELECT role FROM User WHERE user_id=?", (user_id,))
+        role_row = cur.fetchone()
+        user_role = role_row[0] if role_row else "User"
 
+        # 이미 신청한 적 있는지 확인
+        cur.execute("""
+            SELECT status
+            FROM Gathering_Participants
+            WHERE meeting_id=? AND user_id=?
+        """, (meeting_id, user_id))
         if cur.fetchone():
-            print("❌ 이미 신청됨")
+            print("❌ 이미 이 모임에 신청했습니다.")
+            con.rollback()
             return
 
-        status = "Approved"
-
+        # 정원 + VIP 우선권 로직
         if cur_p >= max_p:
-            status = "Waitlist"
-            print("⚠️ 대기 상태")
+            if user_role == "VIP":
+                status = "Approved"
+                print("⭐ VIP 우선권으로 정원 초과지만 바로 참가 승인되었습니다!")
+            else:
+                status = "Waitlist"
+                print("⏳ 정원 초과 → 대기자(Waitlist)로 등록되었습니다.")
         else:
+            status = "Approved"
+            print("✅ 참가 승인되었습니다.")
+
+        # 승인된 경우에만 현재 인원 증가
+        if status == "Approved":
             cur.execute("""
                 UPDATE Gathering
-                SET current_participants=current_participants+1
+                SET current_participants = current_participants + 1
                 WHERE meeting_id=?
-            """,(meeting_id,))
-            print("✅ 참가 완료")
+            """, (meeting_id,))
 
+        # 참가자 테이블에 기록
         cur.execute("""
-            INSERT INTO Gathering_Participants
+            INSERT INTO Gathering_Participants (meeting_id, user_id, status)
             VALUES (?, ?, ?)
-        """,(meeting_id,user_id,status))
+        """, (meeting_id, user_id, status))
 
         con.commit()
 
     except Exception as e:
         con.rollback()
-        print("❌ 오류:",e)
+        print("❌ 오류:", e)
 
     finally:
         con.close()
+
 
 # ================================
 # 중고거래 등록
@@ -390,13 +412,25 @@ def show_market(user_id, mode):
 
     params = []
 
+    
     if mode=="search":
         title = input("검색 이름: ")
         if title:
             query += " AND BM.title LIKE ?"
             params.append("%"+title+"%")
 
+    # 🔽 정렬 조건 추가: VIP 판매자 글이 위로 오도록
+    query += """
+        ORDER BY
+            CASE
+                WHEN U.role = 'VIP' THEN 1
+                ELSE 2
+            END,
+            ML.listing_id DESC
+    """
+
     cur.execute(query, params)
+
     rows = cur.fetchall()
 
     if not rows:
@@ -832,35 +866,72 @@ def request_role_upgrade(user_id):
         )
     """)
 
-    cur.execute("SELECT role FROM User WHERE user_id=?", (user_id,))
-    role_row = cur.fetchone()
-    if not role_row:
+    # 유저의 현재 등급 + 좋아요/싫어요 함께 가져오기
+    cur.execute("""
+        SELECT role, likes_count, dislikes_count
+        FROM User
+        WHERE user_id=?
+    """, (user_id,))
+    row = cur.fetchone()
+
+    if not row:
         print("❌ 유저 정보 없음")
         con.close()
         return
 
-    role = role_row[0]
+    role, likes, dislikes = row
+    score = likes - dislikes
 
-    print(f"\n현재 등급: {role}")
+    print("\n=== 등급 신청 ===")
+    print(f"현재 등급 : {role}")
+    print(f"👍 좋아요 : {likes}, 👎 싫어요 : {dislikes}, 평판 점수 : {score}")
 
+    # -----------------------------
+    # 1) User → VIP 신청 기준 체크
+    # -----------------------------
     if role == "User":
-        print("1. VIP 승급 신청")
+        print("\n📌 VIP 승급 신청 기준")
+        print("- 좋아요 10개 이상")
+        print("- 싫어요 2개 이하")
+        print("- 평판 점수(좋아요-싫어요) 8 이상\n")
+
+        if likes < 3 or dislikes > 2 or score < 1:
+            print("❌ 아직 VIP 신청 기준을 만족하지 못했습니다.")
+            con.close()
+            return
+
+        print("✅ 기준을 만족합니다. VIP 승급 신청 가능!")
+        target_role = "VIP"
+
+    # -----------------------------
+    # 2) BadUser → User 복구 신청 기준 체크
+    # -----------------------------
     elif role == "BadUser":
-        print("1. 일반 유저 복구 신청")
+        print("\n📌 일반 유저 복구 신청 기준")
+        print("- 좋아요 3개 이상\n")
+
+        if likes < 3:
+            print("❌ 아직 일반 유저 복구 기준을 만족하지 못했습니다.")
+            con.close()
+            return
+
+        print("✅ 기준을 만족합니다. 일반 유저 복구 신청 가능!")
+        target_role = "User"
+
     else:
-        print("현재는 신청할 수 없습니다.")
+        print("현재 등급에서는 신청 가능한 등급이 없습니다.")
         con.close()
         return
 
-    choice = input("선택 (0=취소): ")
+    # 실제 신청 여부 확인
+    choice = input("등급 신청을 진행할까요? (1=예, 0=취소): ")
 
     if choice != "1":
-        print("취소")
+        print("신청이 취소되었습니다.")
         con.close()
         return
 
-    target_role = "VIP" if role == "User" else "User"
-
+    # Role_Request 테이블에 신청 기록
     cur.execute("""
         INSERT INTO Role_Request (user_id, current_role, request_role)
         VALUES (?, ?, ?)
@@ -869,7 +940,7 @@ def request_role_upgrade(user_id):
     con.commit()
     con.close()
 
-    print("✅ 등급 신청 완료 (관리자 승인 대기)")
+    print("✅ 등급 신청 완료! (관리자 승인 대기 중)")
 
 # ================================
 # 관리자 메뉴
@@ -939,10 +1010,12 @@ def admin_menu():
 # ================================
 # 자동 등급 체크
 # ================================
+
 def auto_role_check(target_user_id):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
 
+    # 현재 유저의 좋아요/싫어요/등급 조회
     cur.execute("""
         SELECT likes_count, dislikes_count, role
         FROM User
@@ -955,19 +1028,25 @@ def auto_role_check(target_user_id):
         return
 
     likes, dislikes, role = row
+    score = likes - dislikes  # 평판 점수
 
-    # 싫어요 5개 이상 → BadUser
-    if dislikes >= 1 and role != "BadUser":
+    # 1) User → BadUser 자동 강등
+    #    - 싫어요 5개 이상
+    #    - 점수 <= 0 (싫어요가 같거나 더 많음)
+    if role != "BadUser" and dislikes >= 5 and score <= 0:
         cur.execute("UPDATE User SET role='BadUser' WHERE user_id=?", (target_user_id,))
-        print("⚠️ 상대방이 BadUser 로 강등되었습니다")
+        print("⚠️ 상대방이 BadUser 로 강등되었습니다 (싫어요 누적)")
 
-    # VIP인데 좋아요가 너무 떨어지면 → User 강등 (예시: 좋아요 8 미만)
-    elif role == "VIP" and likes < 8:
+    # 2) VIP → User 자동 강등
+    #    - 좋아요가 8 미만이 되거나
+    #    - 싫어요가 3개 이상이 되면
+    elif role == "VIP" and (likes < 8 or dislikes >= 3):
         cur.execute("UPDATE User SET role='User' WHERE user_id=?", (target_user_id,))
-        print("⬇ VIP → 일반 유저 강등")
+        print("⬇ VIP → 일반 유저로 강등되었습니다 (평판 하락)")
 
     con.commit()
     con.close()
+
 
 # ================================
 # 실행
