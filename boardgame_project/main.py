@@ -385,6 +385,7 @@ def create_gathering(user_id):
     print("\n=== 🗓 모임 개설 ===")
 
     title = input("모임 제목: ")
+    desc = input("모임 한줄 설명: ")
     location = input("지역: ")
     date = input("날짜 (YYYY-MM-DD HH:MM): ")
     max_p = input("최대 인원: ")
@@ -392,9 +393,18 @@ def create_gathering(user_id):
     try:
         cur.execute("""
             INSERT INTO Gathering
-            (title, location, meet_date, max_participants, current_participants, host_id, status)
-            VALUES (?, ?, ?, ?, 0, ?, 'Open')
-        """, (title, location, date, max_p, user_id))
+            (title, description, location, meet_date,
+             max_participants, current_participants,
+             host_id, status)
+            VALUES (?, ?, ?, ?, ?, 0, ?, 'Open')
+        """, (
+            title,
+            desc,
+            location,
+            date,
+            max_p,
+            user_id
+        ))
 
         con.commit()
         print("✅ 모임이 개설되었습니다!")
@@ -403,6 +413,7 @@ def create_gathering(user_id):
         print("❌ 모임 생성 실패:", e)
 
     con.close()
+
 
 
 def approve_gathering_requests(user_id):
