@@ -61,13 +61,17 @@ def user_menu(user_id):
         print("1. 보드게임 등록")
         print("2. 보드게임 추천")
         print("3. 모임 검색 및 참여")
-        print("4. 중고거래 등록")
-        print("5. 중고거래 이용")
-        print("6. 판매자 거래 승인")
-        print("7. 내 보드게임 목록 보기")
-        print("8. 후기 작성")
-        print("9. 내 평판 보기")
-        print("10. 등급 신청")
+        print("4. 모임 개설")
+        print("5. 내가 주최한 모임 신청 승인")
+        print("6. 중고거래 등록")
+        print("7. 중고거래 이용")
+        print("8. 판매자 거래 승인")
+        print("9. 내 보드게임 목록 보기")
+        print("10. 후기 작성")
+        print("11. 내 평판 보기")
+        print("12. 등급 신청")
+        
+
         print("0. 로그아웃")
 
         choice = input("선택: ")
@@ -80,19 +84,26 @@ def user_menu(user_id):
             search_gatherings()
             join_gathering(user_id)
         elif choice == "4":
-            register_sale(user_id)
+            create_gathering(user_id)
+
         elif choice == "5":
-            start_market(user_id)
+            approve_gathering_requests(user_id)
         elif choice == "6":
-            approve_trade(user_id)
+            register_sale(user_id)
         elif choice == "7":
-            my_games(user_id)
+            start_market(user_id)
         elif choice == "8":
-            write_review(user_id)
+            approve_trade(user_id)
         elif choice == "9":
-            view_my_reputation(user_id)
+            my_games(user_id)
         elif choice == "10":
+            write_review(user_id)
+        elif choice == "11":
+            view_my_reputation(user_id)
+        elif choice == "12":
             request_role_upgrade(user_id)
+        
+
         elif choice == "0":
             print("로그아웃합니다.")
             break
@@ -263,9 +274,9 @@ def join_gathering(user_id):
     try:
         con.execute("BEGIN")
 
-        # 모임 정보 조회
+        # 1) 모임 정보 확인
         cur.execute("""
-            SELECT max_participants, current_participants
+            SELECT max_participants, current_participants, host_id
             FROM Gathering
             WHERE meeting_id=?
         """, (meeting_id,))
@@ -275,14 +286,9 @@ def join_gathering(user_id):
             con.rollback()
             return
 
-        max_p, cur_p = row
+        max_p, cur_p, host_id = row
 
-        # 내 등급 조회
-        cur.execute("SELECT role FROM User WHERE user_id=?", (user_id,))
-        role_row = cur.fetchone()
-        user_role = role_row[0] if role_row else "User"
-
-        # 이미 신청한 적 있는지 확인
+        # 2) 이미 신청했는지 확인
         cur.execute("""
             SELECT status
             FROM Gathering_Participants
@@ -293,33 +299,52 @@ def join_gathering(user_id):
             con.rollback()
             return
 
-        # 정원 + VIP 우선권 로직
-        if cur_p >= max_p:
-            if user_role == "VIP":
-                status = "Approved"
-                print("⭐ VIP 우선권으로 정원 초과지만 바로 참가 승인되었습니다!")
-            else:
-                status = "Waitlist"
-                print("⏳ 정원 초과 → 대기자(Waitlist)로 등록되었습니다.")
-        else:
-            status = "Approved"
-            print("✅ 참가 승인되었습니다.")
+        # 3) 내 등급 확인 (VIP 여부)
+        cur.execute("SELECT role FROM User WHERE user_id=?", (user_id,))
+        role_row = cur.fetchone()
+        user_role = role_row[0] if role_row else "User"
 
-        # 승인된 경우에만 현재 인원 증가
-        if status == "Approved":
+        # 4) 대기열 순서 계산
+                # ❗ BadUser는 항상 맨 마지막 순번
+        if user_role == "BadUser":
             cur.execute("""
-                UPDATE Gathering
-                SET current_participants = current_participants + 1
-                WHERE meeting_id=?
+                SELECT COALESCE(MAX(wait_order), 0)
+                FROM Gathering_Participants
+                WHERE meeting_id=? AND status='Waitlist'
             """, (meeting_id,))
+            max_order = cur.fetchone()[0]
+            my_order = max_order + 1
+            print("🚫 BadUser → 대기열 최하 순번으로 배치됩니다.")
 
-        # 참가자 테이블에 기록
+        elif user_role == "VIP":
+            # 기존 대기자들 순번 뒤로 한 칸씩 밀기
+            cur.execute("""
+                UPDATE Gathering_Participants
+                SET wait_order = wait_order + 1
+                WHERE meeting_id=?
+                  AND status = 'Waitlist'
+            """, (meeting_id,))
+            my_order = 1
+            print("⭐ VIP → 대기열 맨 앞에 등록됩니다.")
+        else:
+            # 일반 유저: 현재 대기열에서 가장 큰 순번 + 1
+            cur.execute("""
+                SELECT COALESCE(MAX(wait_order), 0)
+                FROM Gathering_Participants
+                WHERE meeting_id=? AND status='Waitlist'
+            """, (meeting_id,))
+            max_order = cur.fetchone()[0]
+            my_order = max_order + 1
+            print(f"⏳ 현재 대기순번: {my_order}번")
+
+        # 5) 대기 상태로만 기록 (Approved 아님!)
         cur.execute("""
-            INSERT INTO Gathering_Participants (meeting_id, user_id, status)
-            VALUES (?, ?, ?)
-        """, (meeting_id, user_id, status))
+            INSERT INTO Gathering_Participants (meeting_id, user_id, status, wait_order)
+            VALUES (?, ?, 'Waitlist', ?)
+        """, (meeting_id, user_id, my_order))
 
         con.commit()
+        print("✅ 모임 대기열에 등록되었습니다. (호스트 승인 후 최종 참가)")
 
     except Exception as e:
         con.rollback()
@@ -328,6 +353,151 @@ def join_gathering(user_id):
     finally:
         con.close()
 
+def create_gathering(user_id):
+    con = sqlite3.connect("boardgame.db")
+    cur = con.cursor()
+
+    print("\n=== 🗓 모임 개설 ===")
+
+    title = input("모임 제목: ")
+    location = input("지역: ")
+    date = input("날짜 (YYYY-MM-DD HH:MM): ")
+    max_p = input("최대 인원: ")
+
+    try:
+        cur.execute("""
+            INSERT INTO Gathering
+            (title, location, meet_date, max_participants, current_participants, host_id, status)
+            VALUES (?, ?, ?, ?, 0, ?, 'Open')
+        """, (title, location, date, max_p, user_id))
+
+        con.commit()
+        print("✅ 모임이 개설되었습니다!")
+
+    except Exception as e:
+        print("❌ 모임 생성 실패:", e)
+
+    con.close()
+
+
+def approve_gathering_requests(user_id):
+    con = sqlite3.connect("boardgame.db")
+    cur = con.cursor()
+
+    print("\n=== 🧑‍💼 모임 참가 신청 승인 (호스트 전용) ===")
+
+    # 1) 내가 호스트이면서, 대기자가 있는 모임 목록
+    cur.execute("""
+        SELECT DISTINCT
+            G.meeting_id,
+            G.title,
+            G.location,
+            G.meet_date
+        FROM Gathering G
+        JOIN Gathering_Participants GP
+             ON G.meeting_id = GP.meeting_id
+        WHERE G.host_id = ?
+          AND GP.status = 'Waitlist'
+        ORDER BY G.meet_date ASC
+    """, (user_id,))
+
+    meetings = cur.fetchall()
+    if not meetings:
+        print("📌 대기 중인 신청이 있는 모임이 없습니다.")
+        con.close()
+        return
+
+    print("\n📋 승인 대기 모임 목록:")
+    for m in meetings:
+        print(f"[{m[0]}] {m[1]} | {m[2]} | {m[3]}")
+
+    meeting_id = input("\n승인할 모임 ID 선택 (0=취소): ")
+    if meeting_id == "0":
+        con.close()
+        return
+
+    # 2) 선택한 모임의 대기열 조회 (VIP가 위로 오도록 wait_order 순)
+    cur.execute("""
+        SELECT
+            GP.user_id,
+            U.username,
+            GP.wait_order
+        FROM Gathering_Participants GP
+        JOIN User U ON GP.user_id = U.user_id
+        WHERE GP.meeting_id = ?
+          AND GP.status = 'Waitlist'
+        ORDER BY GP.wait_order ASC
+    """, (meeting_id,))
+
+    wait_rows = cur.fetchall()
+    if not wait_rows:
+        print("📌 이 모임에는 대기자가 없습니다.")
+        con.close()
+        return
+
+    print("\n📋 대기열 목록 (번호가 작을수록 먼저 신청됨 / VIP는 맨 위로):")
+    for w in wait_rows:
+        print(f"- user_id:{w[0]} | ID:{w[1]} | 대기순번:{w[2]}")
+
+    # 3) 승인할 유저 선택
+    target_user = input("\n승인할 user_id 입력 (0=취소): ")
+    if target_user == "0":
+        con.close()
+        return
+
+    # 4) 정원 확인
+    cur.execute("""
+        SELECT max_participants, current_participants
+        FROM Gathering
+        WHERE meeting_id = ?
+    """, (meeting_id,))
+    g = cur.fetchone()
+    if not g:
+        print("❌ 모임 정보가 없습니다.")
+        con.close()
+        return
+
+    max_p, cur_p = g
+
+    if cur_p >= max_p:
+        print("❌ 정원이 이미 가득 찼습니다. 더 이상 승인할 수 없습니다.")
+        con.close()
+        return
+
+    try:
+        con.execute("BEGIN")
+
+        # 5) 선택한 사람 Approved 로 변경
+        cur.execute("""
+            UPDATE Gathering_Participants
+            SET status = 'Approved'
+            WHERE meeting_id = ?
+              AND user_id = ?
+              AND status = 'Waitlist'
+        """, (meeting_id, target_user))
+
+        if cur.rowcount == 0:
+            print("❌ 해당 유저는 대기열에 없거나 이미 처리되었습니다.")
+            con.rollback()
+            con.close()
+            return
+
+        # 6) 인원 수 +1
+        cur.execute("""
+            UPDATE Gathering
+            SET current_participants = current_participants + 1
+            WHERE meeting_id = ?
+        """, (meeting_id,))
+
+        con.commit()
+        print("✅ 참가 승인 완료!")
+
+    except Exception as e:
+        con.rollback()
+        print("❌ 승인 처리 중 오류:", e)
+
+    finally:
+        con.close()
 
 # ================================
 # 중고거래 등록
@@ -335,6 +505,16 @@ def join_gathering(user_id):
 def register_sale(user_id):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
+
+        # 🔒 BadUser 판매 제한
+    cur.execute("SELECT role FROM User WHERE user_id=?", (user_id,))
+    role = cur.fetchone()[0]
+
+    if role == "BadUser":
+        print("❌ BadUser 계정은 중고거래 판매 등록이 제한됩니다.")
+        con.close()
+        return
+
 
     cur.execute("""
         SELECT UC.collection_id, BM.title, UC.condition_rank
@@ -965,6 +1145,9 @@ def admin_menu():
         print("\n=== ADMIN MENU ===")
         print("1. 등급 신청 목록")
         print("2. 승인 처리")
+        print("3. 전체 유저 목록 보기")
+        print("4. 모임 글 삭제")
+        print("5. 판매글 삭제")
         print("0. 나가기")
 
         c = input("선택: ")
@@ -999,6 +1182,13 @@ def admin_menu():
 
             con.commit()
             print("✅ 승인 완료")
+        elif c == "3":
+            show_all_users()
+        elif c == "4":
+            delete_gathering_by_admin()
+        elif c == "5":
+            delete_listing_by_admin()
+
 
         elif c == "0":
             break
@@ -1006,6 +1196,43 @@ def admin_menu():
             print("❌ 잘못된 입력입니다.")
 
     con.close()
+
+
+def show_all_users():
+    con = sqlite3.connect("boardgame.db")
+    cur = con.cursor()
+
+    print("\n=== 👥 전체 유저 목록 (관리자 전용) ===")
+
+    cur.execute("""
+        SELECT
+            user_id,
+            username,
+            likes_count,
+            dislikes_count,
+            (likes_count - dislikes_count) AS reputation_score,
+            role
+        FROM User
+        ORDER BY reputation_score DESC
+    """)
+
+    rows = cur.fetchall()
+
+    if not rows:
+        print("❌ 등록된 유저가 없습니다.")
+        con.close()
+        return
+
+    print("-" * 60)
+    print("ID | Username | 👍 | 👎 | ⭐평판 | 등급")
+    print("-" * 60)
+
+    for r in rows:
+        print(f"{r[0]:<3} | {r[1]:<10} | {r[2]:<3} | {r[3]:<3} | {r[4]:<5} | {r[5]}")
+
+    print("-" * 60)
+    con.close()
+
 
 # ================================
 # 자동 등급 체크
@@ -1033,7 +1260,7 @@ def auto_role_check(target_user_id):
     # 1) User → BadUser 자동 강등
     #    - 싫어요 5개 이상
     #    - 점수 <= 0 (싫어요가 같거나 더 많음)
-    if role != "BadUser" and dislikes >= 5 and score <= 0:
+    if role != "BadUser" and dislikes >= 1 and score <= 0:
         cur.execute("UPDATE User SET role='BadUser' WHERE user_id=?", (target_user_id,))
         print("⚠️ 상대방이 BadUser 로 강등되었습니다 (싫어요 누적)")
 
@@ -1047,6 +1274,110 @@ def auto_role_check(target_user_id):
     con.commit()
     con.close()
 
+def delete_gathering_by_admin():
+    con = sqlite3.connect("boardgame.db")
+    cur = con.cursor()
+
+    print("\n=== 🗑 모임 글 삭제 ===")
+
+    cur.execute("""
+        SELECT meeting_id, title, meet_date, location
+        FROM Gathering
+        ORDER BY meet_date
+    """)
+
+    rows = cur.fetchall()
+
+    if not rows:
+        print("❌ 삭제할 모임이 없습니다.")
+        con.close()
+        return
+
+    print("\n삭제 가능한 모임 목록:")
+    for r in rows:
+        print(f"[{r[0]}] {r[1]} | {r[3]} | {r[2]}")
+
+    gid = input("\n삭제할 모임 ID (0=취소): ")
+
+    if gid == "0":
+        con.close()
+        return
+
+    # 참가 정보 먼저 삭제
+    cur.execute("DELETE FROM Gathering_Participants WHERE meeting_id=?", (gid,))
+
+    # 모임 삭제
+    cur.execute("DELETE FROM Gathering WHERE meeting_id=?", (gid,))
+
+    con.commit()
+    con.close()
+
+    print("✅ 모임 글 삭제 완료")
+
+def delete_listing_by_admin():
+
+    con = sqlite3.connect("boardgame.db")
+    cur = con.cursor()
+
+    print("\n=== 🗑 판매글 삭제 ===")
+
+    cur.execute("""
+        SELECT
+            ML.listing_id,
+            BM.title,
+            ML.price,
+            U.username,
+            UC.collection_id
+        FROM Market_Listing ML
+        JOIN User_Collection UC ON ML.collection_id = UC.collection_id
+        JOIN BoardGame_Master BM ON UC.game_id = BM.game_id
+        JOIN User U ON ML.seller_id = U.user_id
+    """)
+
+    rows = cur.fetchall()
+
+    if not rows:
+        print("❌ 삭제할 판매글이 없습니다.")
+        con.close()
+        return
+
+    print("\n삭제 가능한 판매 목록:")
+    for r in rows:
+        print(f"[{r[0]}] {r[1]} | {r[3]} | {r[2]}원")
+
+    lid = input("\n삭제할 listing_id (0=취소): ")
+
+    if lid == "0":
+        con.close()
+        return
+
+    target = None
+    for r in rows:
+        if str(r[0]) == lid:
+            target = r
+            break
+
+    if not target:
+        print("❌ 잘못된 ID")
+        con.close()
+        return
+
+    collection_id = target[4]
+
+    # 보드게임 상태 복구
+    cur.execute("""
+        UPDATE User_Collection 
+        SET status='Available'
+        WHERE collection_id=?
+    """, (collection_id,))
+
+    # 판매글 삭제
+    cur.execute("DELETE FROM Market_Listing WHERE listing_id=?", (lid,))
+
+    con.commit()
+    con.close()
+
+    print("✅ 판매글 삭제 완료")
 
 # ================================
 # 실행
