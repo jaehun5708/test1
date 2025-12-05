@@ -3,6 +3,8 @@ import sqlite3
 # ================================
 # 회원가입
 # ================================
+
+
 def sign_up():
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -30,6 +32,8 @@ def sign_up():
 # ================================
 # 로그인
 # ================================
+
+
 def login():
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -55,6 +59,8 @@ def login():
 # ================================
 # 메인 메뉴
 # ================================
+
+
 def user_menu(user_id):
     while True:
         print("\n=== User Menu ===")
@@ -70,7 +76,10 @@ def user_menu(user_id):
         print("10. 후기 작성")
         print("11. 내 평판 보기")
         print("12. 등급 신청")
-        
+        print("13. 거래 진행 (계좌/주소 입력)")
+        print("14. 거래 완료 처리")
+
+
 
         print("0. 로그아웃")
 
@@ -102,7 +111,12 @@ def user_menu(user_id):
             view_my_reputation(user_id)
         elif choice == "12":
             request_role_upgrade(user_id)
-        
+        elif choice == "13":
+            exchange_payment_info(user_id)
+        elif choice == "14":
+            complete_trade(user_id)
+
+
 
         elif choice == "0":
             print("로그아웃합니다.")
@@ -113,6 +127,8 @@ def user_menu(user_id):
 # ================================
 # 시스템 시작
 # ================================
+
+
 def start():
     print("=== BoardGame Community System ===")
 
@@ -142,6 +158,8 @@ def start():
 # ================================
 # 보드게임 등록
 # ================================
+
+
 def register_game(user_id):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -188,6 +206,8 @@ def register_game(user_id):
 # ================================
 # 추천
 # ================================
+
+
 def recommend_games():
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -227,6 +247,8 @@ def recommend_games():
 # ================================
 # 모임 검색
 # ================================
+
+
 def search_gatherings():
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -265,6 +287,8 @@ def search_gatherings():
 # ================================
 # 모임 참여
 # ================================
+
+
 def join_gathering(user_id):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -305,7 +329,7 @@ def join_gathering(user_id):
         user_role = role_row[0] if role_row else "User"
 
         # 4) 대기열 순서 계산
-                # ❗ BadUser는 항상 맨 마지막 순번
+        # ❗ BadUser는 항상 맨 마지막 순번
         if user_role == "BadUser":
             cur.execute("""
                 SELECT COALESCE(MAX(wait_order), 0)
@@ -352,6 +376,7 @@ def join_gathering(user_id):
 
     finally:
         con.close()
+
 
 def create_gathering(user_id):
     con = sqlite3.connect("boardgame.db")
@@ -502,11 +527,13 @@ def approve_gathering_requests(user_id):
 # ================================
 # 중고거래 등록
 # ================================
+
+
 def register_sale(user_id):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
 
-        # 🔒 BadUser 판매 제한
+    # 🔒 BadUser 판매 제한
     cur.execute("SELECT role FROM User WHERE user_id=?", (user_id,))
     role = cur.fetchone()[0]
 
@@ -515,13 +542,12 @@ def register_sale(user_id):
         con.close()
         return
 
-
     cur.execute("""
         SELECT UC.collection_id, BM.title, UC.condition_rank
         FROM User_Collection UC
         JOIN BoardGame_Master BM ON UC.game_id=BM.game_id
         WHERE UC.owner_id=? AND UC.status='Available'
-    """,(user_id,))
+    """, (user_id,))
 
     rows = cur.fetchall()
 
@@ -542,13 +568,13 @@ def register_sale(user_id):
         INSERT INTO Market_Listing
         (collection_id, seller_id, price, description)
         VALUES (?, ?, ?, ?)
-    """,(col_id,user_id,price,desc))
+    """, (col_id, user_id, price, desc))
 
     cur.execute("""
         UPDATE User_Collection
         SET status='In_Trade'
         WHERE collection_id=?
-    """,(col_id,))
+    """, (col_id,))
 
     con.commit()
     con.close()
@@ -557,6 +583,8 @@ def register_sale(user_id):
 # ================================
 # 거래 메뉴
 # ================================
+
+
 def start_market(user_id):
 
     print("\n=== 중고거래 메뉴 ===")
@@ -574,6 +602,8 @@ def start_market(user_id):
 # ================================
 # 공통 거래 화면
 # ================================
+
+
 def show_market(user_id, mode):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -592,8 +622,7 @@ def show_market(user_id, mode):
 
     params = []
 
-    
-    if mode=="search":
+    if mode == "search":
         title = input("검색 이름: ")
         if title:
             query += " AND BM.title LIKE ?"
@@ -623,15 +652,15 @@ def show_market(user_id, mode):
 
     select_id = input("구매 신청할 리스트ID (0=취소): ")
 
-    if select_id=="0":
+    if select_id == "0":
         con.close()
         return
 
     cur.execute("""
         UPDATE Market_Listing
-        SET buyer_id=?
+        SET buyer_id=?, status='Requested'
         WHERE listing_id=?
-    """,(user_id,select_id))
+    """, (user_id, select_id))
 
     con.commit()
     con.close()
@@ -641,30 +670,29 @@ def show_market(user_id, mode):
 # ================================
 # 판매자 승인
 # ================================
-def approve_trade(user_id):
 
+
+def approve_trade(user_id):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
 
     cur.execute("""
-        SELECT ML.listing_id,
-               BM.title,
-               ML.buyer_id,
-               ML.price,
-               UC.collection_id
+        SELECT
+            ML.listing_id,
+            BM.title,
+            ML.buyer_id,
+            ML.price
         FROM Market_Listing ML
-        JOIN User_Collection UC
-             ON ML.collection_id = UC.collection_id
-        JOIN BoardGame_Master BM
-             ON UC.game_id = BM.game_id
+        JOIN User_Collection UC ON ML.collection_id = UC.collection_id
+        JOIN BoardGame_Master BM ON UC.game_id = BM.game_id
         WHERE ML.seller_id = ?
-          AND ML.buyer_id IS NOT NULL
+          AND ML.status = 'Requested'
     """, (user_id,))
 
     rows = cur.fetchall()
 
     if not rows:
-        print("📌 승인 대기 없음")
+        print("📌 승인 대기중인 요청 없음")
         con.close()
         return
 
@@ -674,49 +702,98 @@ def approve_trade(user_id):
 
     listing_id = input("\n승인할 리스트 ID: ")
 
-    target = None
-    for r in rows:
-        if str(r[0]) == listing_id:
-            target = r
-            break
-
-    if not target:
-        print("❌ 잘못된 ID")
-        con.close()
-        return
-
-    buyer_id = target[2]
-    price = target[3]
-    collection_id = target[4]
-
-    # 거래 로그 기록
     cur.execute("""
-        INSERT INTO Trade_Log
-        (listing_id, seller_id, buyer_id, final_price)
-        VALUES (?, ?, ?, ?)
-    """, (listing_id, user_id, buyer_id, price))
+        UPDATE Market_Listing
+        SET status='Approved'
+        WHERE listing_id=?
+          AND seller_id=?
+          AND status='Requested'
+    """, (listing_id, user_id))
 
-    # 소유권 이전
-    cur.execute("""
-        UPDATE User_Collection
-        SET owner_id = ?, status = 'Sold'
-        WHERE collection_id = ?
-    """, (buyer_id, collection_id))
-
-    # 마켓 목록 제거
-    cur.execute("""
-        DELETE FROM Market_Listing
-        WHERE listing_id = ?
-    """, (listing_id,))
+    if cur.rowcount == 0:
+        print("❌ 승인 실패 (ID 오류 또는 이미 처리됨)")
+    else:
+        print("✅ 판매자가 승인했습니다! 계좌 교환 단계로 이동합니다.")
 
     con.commit()
     con.close()
 
-    print("✅ 거래 완료")
+
+
+def exchange_payment_info(user_id):
+    con = sqlite3.connect("boardgame.db")
+    cur = con.cursor()
+
+    cur.execute("""
+        SELECT listing_id, seller_id, buyer_id, status
+        FROM Market_Listing
+        WHERE status='Approved'
+          AND (seller_id=? OR buyer_id=?)
+    """, (user_id,user_id))
+
+    rows = cur.fetchall()
+
+    if not rows:
+        print("📌 진행 중인 거래 없음")
+        con.close()
+        return
+
+    for r in rows:
+        print(f"[{r[0]}] 거래 상태: {r[3]}")
+
+    lid = input("진행할 거래 ID: ")
+
+    cur.execute("""
+        SELECT seller_id, buyer_id
+        FROM Market_Listing
+        WHERE listing_id=?
+    """,(lid,))
+
+    seller_id,buyer_id = cur.fetchone()
+
+    if user_id == seller_id:
+        acc = input("내 계좌번호 입력: ")
+        cur.execute("""
+            UPDATE Market_Listing SET seller_account=?
+            WHERE listing_id=?
+        """,(acc,lid))
+
+    elif user_id == buyer_id:
+        addr = input("배송주소 입력: ")
+        cur.execute("""
+            UPDATE Market_Listing SET buyer_address=?
+            WHERE listing_id=?
+        """,(addr,lid))
+
+    else:
+        print("❌ 권한 없음")
+        con.close()
+        return
+
+    # 계좌 & 주소 둘 다 있으면 결제완료 상태로 전환
+    cur.execute("""
+        SELECT seller_account,buyer_address
+        FROM Market_Listing WHERE listing_id=?
+    """,(lid,))
+
+    acc,addr = cur.fetchone()
+
+    if acc and addr:
+        cur.execute("""
+            UPDATE Market_Listing SET status='Paid'
+            WHERE listing_id=?
+        """,(lid,))
+        print("✅ 정보 교환 완료 → 입금 단계 돌입")
+
+    con.commit()
+    con.close()
+
 
 # ================================
 # 내 보드게임 목록
 # ================================
+
+
 def my_games(user_id):
 
     con = sqlite3.connect("boardgame.db")
@@ -750,6 +827,8 @@ def my_games(user_id):
 # ================================
 # 후기 작성 (메뉴)
 # ================================
+
+
 def write_review(user_id):
     while True:
         print("\n=== 후기 작성 ===")
@@ -770,6 +849,8 @@ def write_review(user_id):
 # ================================
 # 거래 후기 작성
 # ================================
+
+
 def write_trade_review(user_id):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -892,6 +973,8 @@ def write_trade_review(user_id):
 # ================================
 # 모임 후기 작성
 # ================================
+
+
 def write_event_review(user_id):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -1007,6 +1090,8 @@ def write_event_review(user_id):
 # ================================
 # 내 평판 보기
 # ================================
+
+
 def view_my_reputation(user_id):
 
     con = sqlite3.connect("boardgame.db")
@@ -1030,6 +1115,8 @@ def view_my_reputation(user_id):
 # ================================
 # 등급 신청
 # ================================
+
+
 def request_role_upgrade(user_id):
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -1075,7 +1162,7 @@ def request_role_upgrade(user_id):
         print("- 싫어요 2개 이하")
         print("- 평판 점수(좋아요-싫어요) 8 이상\n")
 
-        if likes < 3 or dislikes > 2 or score < 1:
+        if likes < 10 or dislikes > 2 or score < 8:
             print("❌ 아직 VIP 신청 기준을 만족하지 못했습니다.")
             con.close()
             return
@@ -1125,6 +1212,8 @@ def request_role_upgrade(user_id):
 # ================================
 # 관리자 메뉴
 # ================================
+
+
 def admin_menu():
     con = sqlite3.connect("boardgame.db")
     cur = con.cursor()
@@ -1153,13 +1242,15 @@ def admin_menu():
         c = input("선택: ")
 
         if c == "1":
-            cur.execute("SELECT request_id, user_id, current_role, request_role, status, request_date FROM Role_Request WHERE status='Pending'")
+            cur.execute(
+                "SELECT request_id, user_id, current_role, request_role, status, request_date FROM Role_Request WHERE status='Pending'")
             rows = cur.fetchall()
             if not rows:
                 print("📌 대기 중인 신청 없음")
             else:
                 for r in rows:
-                    print(f"[{r[0]}] user:{r[1]} | {r[2]} -> {r[3]} | 상태:{r[4]} | 신청일:{r[5]}")
+                    print(
+                        f"[{r[0]}] user:{r[1]} | {r[2]} -> {r[3]} | 상태:{r[4]} | 신청일:{r[5]}")
 
         elif c == "2":
             rid = input("승인할 request_id 입력: ")
@@ -1177,8 +1268,10 @@ def admin_menu():
 
             uid, target_role = row
 
-            cur.execute("UPDATE User SET role=? WHERE user_id=?", (target_role, uid))
-            cur.execute("UPDATE Role_Request SET status='Approved' WHERE request_id=?", (rid,))
+            cur.execute("UPDATE User SET role=? WHERE user_id=?",
+                        (target_role, uid))
+            cur.execute(
+                "UPDATE Role_Request SET status='Approved' WHERE request_id=?", (rid,))
 
             con.commit()
             print("✅ 승인 완료")
@@ -1188,7 +1281,6 @@ def admin_menu():
             delete_gathering_by_admin()
         elif c == "5":
             delete_listing_by_admin()
-
 
         elif c == "0":
             break
@@ -1260,19 +1352,22 @@ def auto_role_check(target_user_id):
     # 1) User → BadUser 자동 강등
     #    - 싫어요 5개 이상
     #    - 점수 <= 0 (싫어요가 같거나 더 많음)
-    if role != "BadUser" and dislikes >= 1 and score <= 0:
-        cur.execute("UPDATE User SET role='BadUser' WHERE user_id=?", (target_user_id,))
+    if role != "BadUser" and dislikes >= 5 and score <= 0:
+        cur.execute("UPDATE User SET role='BadUser' WHERE user_id=?",
+                    (target_user_id,))
         print("⚠️ 상대방이 BadUser 로 강등되었습니다 (싫어요 누적)")
 
     # 2) VIP → User 자동 강등
     #    - 좋아요가 8 미만이 되거나
     #    - 싫어요가 3개 이상이 되면
     elif role == "VIP" and (likes < 8 or dislikes >= 3):
-        cur.execute("UPDATE User SET role='User' WHERE user_id=?", (target_user_id,))
+        cur.execute("UPDATE User SET role='User' WHERE user_id=?",
+                    (target_user_id,))
         print("⬇ VIP → 일반 유저로 강등되었습니다 (평판 하락)")
 
     con.commit()
     con.close()
+
 
 def delete_gathering_by_admin():
     con = sqlite3.connect("boardgame.db")
@@ -1313,6 +1408,7 @@ def delete_gathering_by_admin():
     con.close()
 
     print("✅ 모임 글 삭제 완료")
+
 
 def delete_listing_by_admin():
 
@@ -1379,8 +1475,57 @@ def delete_listing_by_admin():
 
     print("✅ 판매글 삭제 완료")
 
+
+def complete_trade(user_id):
+    con = sqlite3.connect("boardgame.db")
+    cur = con.cursor()
+
+    cur.execute("""
+        SELECT listing_id, collection_id, buyer_id, price
+        FROM Market_Listing
+        WHERE seller_id=? AND status='Paid'
+    """,(user_id,))
+
+    rows = cur.fetchall()
+    if not rows:
+        print("📌 완료할 거래 없음")
+        con.close()
+        return
+
+    for r in rows:
+        print(f"[{r[0]}] 판매 완료 처리 가능")
+
+    lid=input("완료할 거래 ID:")
+
+    cur.execute("""
+        SELECT collection_id,buyer_id,price
+        FROM Market_Listing WHERE listing_id=?
+    """,(lid,))
+
+    cid,buyer,price = cur.fetchone()
+
+    cur.execute("""
+        INSERT INTO Trade_Log
+        (listing_id,seller_id,buyer_id,final_price)
+        VALUES (?,?,?,?)
+    """,(lid,user_id,buyer,price))
+
+    cur.execute("""
+        UPDATE User_Collection
+        SET owner_id=?, status='Sold'
+        WHERE collection_id=?
+    """,(buyer,cid))
+
+    cur.execute("DELETE FROM Market_Listing WHERE listing_id=?", (lid,))
+
+    con.commit()
+    con.close()
+
+    print("🎉 거래 종료 완료!")
+
+
 # ================================
 # 실행
 # ================================
-if __name__=="__main__":
+if __name__ == "__main__":
     start()
