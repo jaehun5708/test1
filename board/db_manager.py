@@ -123,14 +123,39 @@ class BoardLinkDB:
 
     # [수정됨] description 파라미터 추가
     def create_gathering(self, user_id, title, desc, loc, date_str, max_p):
+
+        conn = self.get_connection()
+        cur = conn.cursor()
+
         try:
-            self.execute_query("""
-                INSERT INTO Gathering (host_id, title, description, location, meet_date, max_participants, current_participants, status)
-                VALUES (?, ?, ?, ?, ?, ?, 0, 'Open')
+            # ✅ 1) Gathering 생성 + 현재인원 1로 시작
+            cur.execute("""
+                INSERT INTO Gathering
+                (host_id, title, description, location, meet_date,
+                max_participants, current_participants, status)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 'Open')
             """, (user_id, title, desc, loc, date_str, max_p))
+
+            # ✅ 새로 생성된 meeting_id 가져오기
+            meeting_id = cur.lastrowid
+
+            # ✅ 2) 만든 사람 본인을 참가자로 자동 등록
+            cur.execute("""
+                INSERT INTO Gathering_Participants
+                (meeting_id, user_id, status, wait_order)
+                VALUES (?, ?, 'Approved', 0)
+            """, (meeting_id, user_id))
+
+            conn.commit()
             return True, "모임 개설 완료"
+
         except Exception as e:
+            conn.rollback()
             return False, str(e)
+
+        finally:
+            conn.close()
+
 
     def join_gathering(self, user_id, meeting_id):
         conn = self.get_connection()
@@ -417,27 +442,45 @@ class BoardLinkDB:
         return self.run_query(query, (user_id, user_id, user_id, user_id))
 
     def get_pending_event_reviews(self, user_id):
-        query = """
+        """
+        내가 참여 완료한 모임에서
+        자기 자신을 제외한 모든 Approved 인원 평가 리스트 반환
+        """
+        q = """
             SELECT
                 G.meeting_id,
                 G.title AS meeting_title,
                 U.username AS host_name
-            FROM Gathering G
-            JOIN Gathering_Participants GP
-                ON G.meeting_id = GP.meeting_id
-            JOIN User U
-                ON G.host_id = U.user_id
 
-            WHERE GP.user_id = ?
-                AND GP.status = 'Approved'
-                AND NOT EXISTS (
-                    SELECT 1 FROM Review R
-                    WHERE R.meeting_id = G.meeting_id
-                        AND R.writer_id = ?
-                        AND R.mode = 'Event'
-                )
+            FROM Gathering_Participants GP1
+
+            JOIN Gathering G
+                ON GP1.meeting_id = G.meeting_id
+
+            JOIN Gathering_Participants GP2
+                ON GP2.meeting_id = G.meeting_id
+
+            JOIN User U
+                ON GP2.user_id = U.user_id
+
+            WHERE GP1.user_id = ?
+            AND GP1.status = 'Approved'
+
+            AND GP2.status = 'Approved'
+            AND GP2.user_id != ?
+
+            AND NOT EXISTS (
+                SELECT 1 FROM Review R
+                WHERE R.mode='Event'
+                AND R.writer_id=?
+                AND R.target_user=GP2.user_id
+                AND R.meeting_id=G.meeting_id
+            )
+
+            ORDER BY G.meet_date DESC
         """
-        return self.run_query(query, (user_id, user_id))
+        return self.run_query(q, (user_id, user_id, user_id))
+
 
     def get_user_id_by_username(self, username):
         q = "SELECT user_id FROM User WHERE username=?"
@@ -656,6 +699,83 @@ class BoardLinkDB:
 
         finally:
             conn.close()
+
+    def search_market(
+        self,
+        title=None,
+        genre=None,
+        max_price=None
+    ):
+        query = """
+            SELECT
+                ML.listing_id,
+                BM.title,
+                BM.genre,
+                ML.price,
+                ML.description,
+                U.username,
+                U.role,
+                ML.status
+            FROM Market_Listing ML
+            JOIN User_Collection UC ON ML.collection_id = UC.collection_id
+            JOIN BoardGame_Master BM ON UC.game_id = BM.game_id
+            JOIN User U ON ML.seller_id = U.user_id
+            WHERE ML.buyer_id IS NULL
+            AND UC.status='In_Trade'
+        """
+
+        params = []
+
+        if title:
+            query += " AND BM.title LIKE ?"
+            params.append(f"%{title}%")
+
+        if genre:
+            query += " AND BM.genre LIKE ?"
+            params.append(f"%{genre}%")
+
+        if max_price:
+            query += " AND ML.price <= ?"
+            params.append(max_price)
+
+        query += " ORDER BY ML.listing_id DESC"
+
+        return self.run_query(query, params)
+    
+    def search_gathering_filtered(
+        self,
+        keyword=None,
+        location=None,
+        date=None,
+        status=None
+    ):
+        q = """
+            SELECT G.*
+            FROM Gathering G
+            WHERE 1=1
+        """
+        p = []
+
+        if keyword:
+            q += " AND (G.title LIKE ? OR G.description LIKE ?)"
+            p.extend([f"%{keyword}%", f"%{keyword}%"])
+
+        if location:
+            q += " AND G.location LIKE ?"
+            p.append(f"%{location}%")
+
+        if date:
+            q += " AND G.meet_date >= ?"
+            p.append(date)
+
+        if status:
+            q += " AND G.status=?"
+            p.append(status)
+
+        q += " ORDER BY meet_date ASC"
+
+        return self.run_query(q, p)
+
 
 
 

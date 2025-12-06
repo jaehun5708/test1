@@ -39,8 +39,10 @@ def login_page():
         nloc = st.text_input("지역")
         if st.button("가입"):
             suc, msg = db.sign_up(nid, npw, nloc)
-            if suc: st.success(msg)
-            else: st.error(msg)
+            if suc:
+                st.success(msg)
+            else:
+                st.error(msg)
 
 # ==========================
 # 메인 앱
@@ -97,13 +99,52 @@ def page_boardgame():
         df = db.get_my_collection(st.session_state.user_id)
         st.dataframe(df)
     with tab2:
+        st.subheader("📌 보드게임 등록")
+
         with st.form("reg_g"):
             title = st.text_input("게임명")
-            cond = st.selectbox("상태", ["A", "B", "C"])
+
+            genre = st.text_input("장르 / 테마")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                min_p = st.number_input("최소 인원", min_value=1, value=2)
+            with c2:
+                max_p = st.number_input("최대 인원", min_value=min_p, value=max(min_p, 4))
+
+            playtime = st.number_input(
+                "평균 플레이 타임 (분 단위)",
+                min_value=5,
+                value=30
+            )
+
+            difficulty = st.number_input(
+                "난이도 (1.0~5.0)",
+                min_value=1.0,
+                max_value=5.0,
+                step=0.5,
+                value=2.5
+            )
+
+            condition = st.selectbox("상태", ["A", "B", "C"])
+
             if st.form_submit_button("등록"):
-                db.register_game_to_collection(
-                    st.session_state.user_id, title, cond, "Etc", 2, 4, 30, 2.5)
-                st.success("등록됨")
+                ok, msg = db.register_game_to_collection(
+                    st.session_state.user_id,
+                    title,
+                    condition,
+                    genre,
+                    min_p,
+                    max_p,
+                    playtime,
+                    difficulty
+                )
+
+                if ok:
+                    st.success("게임 등록 완료")
+                else:
+                    st.error(msg)
+
     with tab3:
         st.subheader("🎯 보드게임 추천 & 검색")
 
@@ -152,19 +193,48 @@ def page_gathering():
     tab1, tab2, tab3, tab4 = st.tabs(["모임 찾기", "내 신청 현황", "모임 개설", "호스트 관리"])
 
     with tab1:
-        st.subheader("참여 가능한 모임")
-        df = db.search_gatherings()
+        st.subheader("🔎 모임 검색")
 
-        if not df.empty:
-            # 설명(description) 컬럼도 보여줍니다.
-            st.dataframe(df.style.map(lambda x: 'color: green' if x ==
-                         'Open' else 'color: red', subset=['status']))
+        with st.expander("검색 조건"):
+            kw = st.text_input("제목 / 내용 검색")
+            loc = st.text_input("장소", key="search_loc")
+            date = st.text_input("날짜 이후(YYYY-MM-DD)")
 
+            status = st.selectbox(
+                "모집 상태", ["", "Open", "Closed"]
+            )
+            status = status if status else None
+
+        if st.button("검색"):
+            df = db.search_gathering_filtered(
+                keyword=kw,
+                location=loc,
+                date=date,
+                status=status
+            )
+        else:
+            df = db.search_gatherings()
+
+        st.dataframe(df)
+
+        # ✅ 참여 신청 영역 (복구)
+        st.divider()
         mid = st.number_input("참여할 모임 ID", min_value=0)
+
         if st.button("참여 신청"):
-            suc, msg = db.join_gathering(st.session_state.user_id, mid)
-            if suc: st.success(msg)
-            else: st.error(msg)
+            suc, msg = db.join_gathering(
+                st.session_state.user_id,
+                mid
+            )
+
+            if suc:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+
+
+
 
     with tab2:
         st.subheader("📋 내가 신청한 모임")
@@ -192,7 +262,7 @@ def page_gathering():
         # [수정됨] 설명 입력창 추가
         title = st.text_input("제목")
         desc = st.text_input("한줄 설명", placeholder="어떤 모임인지 간단히 설명해주세요.")
-        loc = st.text_input("장소")
+        loc = st.text_input("장소", key="create_loc")
         date = st.text_input("일시 (YYYY-MM-DD HH:MM)")
         mp = st.number_input("인원", value=4)
 
@@ -247,8 +317,10 @@ def page_gathering():
                                 dislikes = app['dislikes_count']
 
                                 role_badge = "👤"
-                                if role == 'VIP': role_badge = "⭐ VIP"
-                                elif role == 'BadUser': role_badge = "🚫 BadUser"
+                                if role == 'VIP':
+                                    role_badge = "⭐ VIP"
+                                elif role == 'BadUser':
+                                    role_badge = "🚫 BadUser"
 
                                 col_info, col_btn1, col_btn2 = st.columns(
                                     [4, 1, 1])
@@ -290,8 +362,10 @@ def page_gathering():
                                 dislikes = ap['dislikes_count']
 
                                 role_badge = "👤"
-                                if role == 'VIP': role_badge = "⭐ VIP"
-                                elif role == 'BadUser': role_badge = "🚫 BadUser"
+                                if role == 'VIP':
+                                    role_badge = "⭐ VIP"
+                                elif role == 'BadUser':
+                                    role_badge = "🚫 BadUser"
 
                                 st.write(
                                     f"- **{uname}** ({role_badge}) | 👍 {likes} / 👎 {dislikes}")
@@ -306,23 +380,50 @@ def page_market():
         ["목록/구매", "판매등록", "판매승인", "정보교환", "거래확정"])
 
     with tab1:
-        df = db.get_market_list()
+        st.subheader("🔍 판매 목록 검색")
+
+        with st.expander("검색 조건"):
+            s_title = st.text_input("게임명")
+            s_genre = st.text_input("장르")
+            s_price = st.number_input("최대 가격(원)", min_value=0, value=0)
+            s_price = s_price if s_price > 0 else None
+
+        if st.button("검색"):
+            df = db.search_market(s_title, s_genre, s_price)
+        else:
+            df = db.get_market_list()
+
         st.dataframe(df)
+
         bid = st.number_input("구매할 ID", min_value=0)
+
         if st.button("구매 신청"):
             db.request_purchase(st.session_state.user_id, bid)
             st.success("신청 완료")
 
+
     with tab2:
+        st.subheader("📤 판매 등록")
+
         my_g = db.get_my_collection(st.session_state.user_id)
         st.dataframe(my_g)
+
         cid = st.number_input("판매할 Collection ID", min_value=0)
         price = st.number_input("가격", min_value=0)
+        desc = st.text_area("판매 설명", height=80)
+
         if st.button("판매 등록"):
             res, msg = db.register_market(
-                st.session_state.user_id, cid, price, "설명")
-            if res: st.success(msg)
-            else: st.error(msg)
+                st.session_state.user_id,
+                cid,
+                price,
+                desc
+            )
+            if res:
+                st.success(msg)
+            else:
+                st.error(msg)
+
 
     with tab3:
         q = "SELECT listing_id, price, buyer_id FROM Market_Listing WHERE seller_id=? AND status='Requested'"
@@ -356,7 +457,8 @@ def page_market():
         if st.button("최종 완료"):
             suc, msg = db.complete_trade_transaction(
                 fin_id, st.session_state.user_id)
-            if suc: st.success(msg)
+            if suc:
+                st.success(msg)
 
 # --------------------------
 # 페이지: 관리자
@@ -394,7 +496,6 @@ def page_admin():
                 st.rerun()
             else:
                 st.error(msg)
-
 
 
 def page_mypage():
@@ -450,7 +551,7 @@ def page_reviews():
     subtab1, subtab2 = st.tabs(["거래 평가", "모임 평가"])
 
     # ==========================
-    # 거래 평가
+    # 1) 거래 평가
     # ==========================
     with subtab1:
         st.subheader("🛒 거래 평가")
@@ -465,14 +566,13 @@ def page_reviews():
                 target = row["target_user"]
                 game = row["game_title"]
 
-
                 st.write(f"🎮 거래 게임: **{game}**")
                 st.write(f"🙍 거래 상대: **{target}**")
 
                 c1, c2 = st.columns(2)
 
                 with c1:
-                    if st.button("👍 좋아요", key=f"trade_up_{tid}"):
+                    if st.button("👍 좋아요", key=f"trade_up_{tid}_{target}"):
                         suc, msg = db.submit_review(
                             st.session_state.user_id,
                             target_user=target,
@@ -480,10 +580,12 @@ def page_reviews():
                             mode="Trade",
                             rating=1
                         )
-                        if suc: st.success(msg); st.rerun()
+                        if suc:
+                            st.success(msg)
+                            st.rerun()
 
                 with c2:
-                    if st.button("👎 싫어요", key=f"trade_down_{tid}"):
+                    if st.button("👎 싫어요", key=f"trade_down_{tid}_{target}"):
                         suc, msg = db.submit_review(
                             st.session_state.user_id,
                             target_user=target,
@@ -491,10 +593,12 @@ def page_reviews():
                             mode="Trade",
                             rating=-1
                         )
-                        if suc: st.success(msg); st.rerun()
+                        if suc:
+                            st.success(msg)
+                            st.rerun()
 
     # ==========================
-    # 모임 평가
+    # 2) 모임 평가
     # ==========================
     with subtab2:
         st.subheader("🧑‍🤝‍🧑 모임 평가")
@@ -505,36 +609,41 @@ def page_reviews():
             st.info("평가할 모임이 없습니다.")
         else:
             for _, row in events.iterrows():
-                mid = row["meeting_id"]
-                host = row["host_name"]
+                mid = row["meeting_id"]          # ← 여기서 mid 정의
                 title = row["meeting_title"]
+                target = row["host_name"]      # 평가 대상 유저 이름
 
                 st.write(f"🗓 모임명: **{title}**")
-                st.write(f"🧑‍💼 호스트: **{host}**")
+                st.write(f"👤 평가 대상: **{target}**")
 
                 c1, c2 = st.columns(2)
 
                 with c1:
-                    if st.button("👍 좋아요", key=f"event_up_{mid}"):
+                    if st.button("👍 좋아요", key=f"event_up_{mid}_{target}"):
                         suc, msg = db.submit_review(
                             st.session_state.user_id,
-                            target_user=host,
+                            target_user=target,
                             meeting_id=mid,
                             mode="Event",
                             rating=1
                         )
-                        if suc: st.success(msg); st.rerun()
+                        if suc:
+                            st.success(msg)
+                            st.rerun()
 
                 with c2:
-                    if st.button("👎 싫어요", key=f"event_down_{mid}"):
+                    if st.button("👎 싫어요", key=f"event_down_{mid}_{target}"):
                         suc, msg = db.submit_review(
                             st.session_state.user_id,
-                            target_user=host,
+                            target_user=target,
                             meeting_id=mid,
                             mode="Event",
                             rating=-1
                         )
-                        if suc: st.success(msg); st.rerun()
+                        if suc:
+                            st.success(msg)
+                            st.rerun()
+
 
 
 if st.session_state.logged_in:
