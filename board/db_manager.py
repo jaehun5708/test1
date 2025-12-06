@@ -5,6 +5,112 @@ import pandas as pd
 class BoardLinkDB:
     def __init__(self, db_path="boardgame.db"):
         self.db_path = db_path
+        self.init_tables()
+
+    def init_tables(self):
+        conn = self.get_connection()
+        cur = conn.cursor()
+
+        cur.executescript("""
+        CREATE TABLE IF NOT EXISTS User (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            location_info TEXT,
+            role TEXT DEFAULT 'User',
+            likes_count INTEGER DEFAULT 0,
+            dislikes_count INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS BoardGame_Master (
+            game_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            genre TEXT,
+            min_players INTEGER,
+            max_players INTEGER,
+            avg_playtime INTEGER,
+            difficulty REAL
+        );
+
+        CREATE TABLE IF NOT EXISTS User_Collection (
+            collection_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER,
+            game_id INTEGER,
+            condition_rank TEXT,
+            status TEXT,
+            FOREIGN KEY(owner_id) REFERENCES User(user_id),
+            FOREIGN KEY(game_id) REFERENCES BoardGame_Master(game_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS Gathering (
+            meeting_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            host_id INTEGER,
+            title TEXT,
+            description TEXT,
+            location TEXT,
+            meet_date TEXT,
+            max_participants INTEGER,
+            current_participants INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'Open',
+            FOREIGN KEY(host_id) REFERENCES User(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS Gathering_Participants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id INTEGER,
+            user_id INTEGER,
+            status TEXT,
+            wait_order INTEGER,
+            FOREIGN KEY(meeting_id) REFERENCES Gathering(meeting_id),
+            FOREIGN KEY(user_id) REFERENCES User(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS Market_Listing (
+            listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            collection_id INTEGER,
+            seller_id INTEGER,
+            buyer_id INTEGER,
+            price INTEGER,
+            description TEXT,
+            status TEXT DEFAULT 'Open',
+            seller_account TEXT,
+            buyer_address TEXT,
+            FOREIGN KEY(collection_id) REFERENCES User_Collection(collection_id),
+            FOREIGN KEY(seller_id) REFERENCES User(user_id),
+            FOREIGN KEY(buyer_id) REFERENCES User(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS Trade_Log (
+            trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            listing_id INTEGER,
+            seller_id INTEGER,
+            buyer_id INTEGER,
+            final_price INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS Review (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            writer_id INTEGER,
+            target_user INTEGER,
+            trade_id INTEGER,
+            meeting_id INTEGER,
+            mode TEXT,
+            rating INTEGER,
+            content TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS Role_Request (
+            req_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            current_role TEXT,
+            request_role TEXT,
+            status TEXT DEFAULT 'Pending'
+        );
+        """)
+
+        conn.commit()
+        conn.close()
+
 
     def get_connection(self):
         return sqlite3.connect(self.db_path)
@@ -292,15 +398,24 @@ class BoardLinkDB:
 
     def get_market_list(self):
         query = """
-            SELECT ML.listing_id, BM.title, ML.price, U.username, U.role, ML.status
+            SELECT
+                BM.title            AS game_title,      -- 게임명
+                ML.price            AS price,           -- 가격
+                ML.description      AS description,     -- 설명
+                UC.condition_rank   AS condition_rank,  -- 상태(A/B/C)
+                ML.status           AS trade_status,    -- 거래상태
+                U.username          AS seller           -- 판매자
             FROM Market_Listing ML
             JOIN User_Collection UC ON ML.collection_id = UC.collection_id
             JOIN BoardGame_Master BM ON UC.game_id = BM.game_id
             JOIN User U ON ML.seller_id = U.user_id
-            WHERE ML.buyer_id IS NULL AND UC.status='In_Trade'
-            ORDER BY CASE WHEN U.role='VIP' THEN 1 ELSE 2 END, ML.listing_id DESC
+            WHERE
+                ML.buyer_id IS NULL
+                AND UC.status = 'In_Trade'
+            ORDER BY ML.listing_id DESC
         """
         return self.run_query(query)
+
 
     def request_purchase(self, user_id, listing_id):
         return self.execute_query("UPDATE Market_Listing SET buyer_id=?, status='Requested' WHERE listing_id=?", (user_id, listing_id))
@@ -648,17 +763,20 @@ class BoardLinkDB:
         return self.run_query(query, params)
     
     def get_role_requests(self):
-        """
-        대기 중(Pending) 등급 변경 신청 목록 조회 (관리자용)
-        """
         query = """
-            SELECT RR.req_id, U.username, RR.from_role, RR.to_role, RR.status
+            SELECT
+                RR.req_id,
+                U.username,
+                RR.current_role,
+                RR.request_role,
+                RR.status
             FROM Role_Request RR
             JOIN User U ON RR.user_id = U.user_id
             WHERE RR.status = 'Pending'
             ORDER BY RR.req_id ASC
         """
         return self.run_query(query)
+
     
     def approve_role_request(self, req_id):
         """
